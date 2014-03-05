@@ -19,18 +19,13 @@
 #include <getopt.h>
 
 
-#define COUNTOF(A) (sizeof (A) / sizeof (A)[0])
-
-#define MAX_DST 256
-
-
 static bool s_append;
 static bool s_skip_openfail;
 static bool s_skip_writefail;
 static bool s_flush;
 static int s_next;
 static int s_count;
-static FILE *s_dst[MAX_DST];
+static FILE **s_dst;
 
 
 static void process_args(int *argc, char ***argv);
@@ -82,8 +77,8 @@ init(int *argc, char ***argv)
 	if (!*argc)
 		errx(EXIT_FAILURE, "no files given (try -h)");
 
-	if (*argc > MAX_DST)
-		errx(EXIT_FAILURE, "too many files. max: %d", MAX_DST);
+	if (!(s_dst = malloc(*argc * sizeof *s_dst)))
+		err(EXIT_FAILURE, "malloc() failed");
 
 	/* open all files, fill s_dst with their FILE*s */
 	for (int i = 0; i < *argc; i++) {
