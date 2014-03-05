@@ -7,7 +7,7 @@ afterwards, usual ./configure ; make ; make install stuff applies
 
 See INSTALL for generic autohell compile/install instructions.
 
-(C) 2013 Timo Buhrmester <van.fisted@googlemail.com>
+(C) 2013-2014 Timo Buhrmester <van.fisted@googlemail.com>
 Contact: #fstd on irc.freenode.org
 
 See COPYING for license information

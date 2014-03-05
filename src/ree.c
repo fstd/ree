@@ -1,5 +1,5 @@
 /* ree.c - ree(1) source code
- * ree - the round-robin style tee(1) - (C) 2013, Timo Buhrmester
+ * ree - the round-robin style tee(1) - (C) 2013-2014, Timo Buhrmester
  * See README for contact-, COPYING for license information.  */
 
 #if HAVE_CONFIG_H
