@@ -99,6 +99,9 @@ init(int *argc, char ***argv)
 			s_count++;
 	}
 
+	if (!s_count)
+		errx(EXIT_FAILURE, "couldn't open any of the output files");
+
 	errno = 0;
 }
 
@@ -110,7 +113,7 @@ usage(FILE *str, const char *a0, int ec)
 	I("====================================================================");
 	I("==                    ree - round-robin tee(1)                    ==");
 	I("====================================================================");
-	fprintf(str, "usage: %s [-asfh] <file1> <file2> .. <fileN>\n", a0);
+	fprintf(str, "usage: %s [-asSfhV] <file1> <file2> .. <fileN>\n", a0);
 	I("");
 	I("Reads linewise from standard input.  For each line, if it is");
 	I("  the n-th line read so far, it is written out to the");
