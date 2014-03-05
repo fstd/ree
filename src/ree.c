@@ -14,6 +14,8 @@
 #include <stdbool.h>
 #include <errno.h>
 
+#include <err.h>
+
 #include <getopt.h>
 
 
@@ -22,12 +24,13 @@
 #define MAX_DST 256
 
 
-static bool g_append;
-static bool g_skip_fail;
-static bool g_flush;
-static int g_next;
-static int g_count;
-static FILE *g_dst[MAX_DST];
+static bool s_append;
+static bool s_skip_openfail;
+static bool s_skip_writefail;
+static bool s_flush;
+static int s_next;
+static int s_count;
+static FILE *s_dst[MAX_DST];
 
 
 static void process_args(int *argc, char ***argv);
@@ -41,21 +44,26 @@ process_args(int *argc, char ***argv)
 {
 	char *a0 = (*argv)[0];
 
-	for(int ch; (ch = getopt(*argc, *argv, "asfvch")) != -1;) {
+	for (int ch; (ch = getopt(*argc, *argv, "asSfhV")) != -1;) {
 		switch (ch) {
 		case 'a':
-			g_append = true;
+			s_append = true;
 			break;
 		case 's':
-			g_skip_fail = true;
+			s_skip_openfail = true;
+			break;
+		case 'S':
+			s_skip_writefail = true;
 			break;
 		case 'f':
-			g_flush = true;
+			s_flush = true;
 			break;
 		case 'h':
 			usage(stdout, a0, EXIT_SUCCESS);
 			break;
-		case '?':
+		case 'V':
+			puts(PACKAGE_NAME " v" PACKAGE_VERSION);
+			exit(EXIT_SUCCESS);
 		default:
 			usage(stderr, a0, EXIT_FAILURE);
 		}
@@ -71,25 +79,27 @@ init(int *argc, char ***argv)
 {
 	process_args(argc, argv);
 
-	if (!*argc) {
-		fprintf(stderr, "no files given\n");
-		exit(EXIT_FAILURE);
-	}
+	if (!*argc)
+		errx(EXIT_FAILURE, "no files given (try -h)");
 
-	if (*argc > MAX_DST) {
-		fprintf(stderr, "too many files given. max:%d\n", MAX_DST);
-		exit(EXIT_FAILURE);
-	}
+	if (*argc > MAX_DST)
+		errx(EXIT_FAILURE, "too many files. max: %d", MAX_DST);
 
-	for(int i = 0; i < *argc; i++) {
-		g_dst[g_count] = fopen((*argv)[i], g_append?"a":"w");
-		if (!g_dst[g_count]) {
-			perror((*argv)[i]);
-			if (!g_skip_fail)
+	/* open all files, fill s_dst with their FILE*s */
+	for (int i = 0; i < *argc; i++) {
+		errno = 0;
+		s_dst[s_count] = (strcmp((*argv)[i], "-") == 0)
+		    ? stdout : fopen((*argv)[i], s_append ? "a" : "w");
+
+		if (!s_dst[s_count]) {
+			warn((*argv)[i]);
+			if (!s_skip_openfail)
 				exit(EXIT_FAILURE);
 		} else
-			g_count++;
+			s_count++;
 	}
+
+	errno = 0;
 }
 
 
@@ -97,17 +107,32 @@ static void
 usage(FILE *str, const char *a0, int ec)
 {
 	#define I(STR) fputs(STR "\n", str)
-	I("==============================");
-	I("== ree - round-robin tee(1) ==");
-	I("==============================");
+	I("====================================================================");
+	I("==                    ree - round-robin tee(1)                    ==");
+	I("====================================================================");
 	fprintf(str, "usage: %s [-asfh] <file1> <file2> .. <fileN>\n", a0);
 	I("");
-	I("\t-a: Append to files instead of truncating them");
-	I("\t-s: Skip files which could not be opened");
-	I("\t-f: Flush after each line");
-	I("\t-h: Display brief usage statement and terminate");
+	I("Reads linewise from standard input.  For each line, if it is");
+	I("  the n-th line read so far, it is written out to the");
+	I("  (n % N)-th output file (N being the total number of files");
+	I("  specified (see above usage statement)).");
+	I("In other words, the first line goes to file1, the second line");
+	I("  goes to file2, the N-th line goes to fileN, and the N+1-th");
+	I("  line goes to file1 again.");
+	I("A file name consisting of a single dash ``-'' is interpreted");
+	I("  as standard output (and may appear more than once).");
 	I("");
-	I("(C) 2013, Timo Buhrmester (contact: #fstd @ irc.freenode.org)");
+	I("Parameter summary:");
+	I("\t-a: Append to files instead of truncating them");
+	I("\t-f: Flush after each line");
+	I("\t-s: Skip files which could not be opened, instead of failing");
+	I("\t-S: If writing to a file produces an error, skip it and ");
+	I("\t      proceed with the remaining files, instead of failing");
+	I("\t-h: Display this usage statement and terminate");
+	I("\t-V: Print version information");
+	I("");
+	I("Version: " PACKAGE_VERSION);
+	I("(C) 2013-2014, Timo Buhrmester (contact: #fstd @ irc.freenode.org)");
 	#undef I
 	exit(ec);
 }
@@ -119,21 +144,12 @@ write_line(FILE *fp, const char* line)
 	size_t cnt = 0;
 	size_t len = strlen(line);
 
-	while(cnt < len)
-	{
-		errno = 0;
+	while (cnt < len) {
 		size_t n = fwrite(line + cnt, 1, len - cnt, fp);
-		if (n < len - cnt) {
-			if (ferror(fp)) {
-				fprintf(stderr, "ferror() is set\n");
-				return false;
-			} else if (feof(fp)) {
-				fprintf(stderr, "feof() is set\n");
-				return false;
-			} else
-				fprintf(stderr, "short write (%zu/%zu)\n",
-						n, len-cnt);
-		}
+
+		/* short return count implies write error */
+		if (n < len - cnt)
+			return false;
 
 		cnt += n;
 	}
@@ -150,20 +166,29 @@ main(int argc, char **argv)
 	char *line = NULL;
 	size_t len = 0;
 	ssize_t readlen;
+	size_t remain = s_count;
 
 	while ((readlen = getline(&line, &len, stdin)) != -1) {
-		if (!write_line(g_dst[g_next], line)) {
-			perror("write_line() failed");
-			exit(EXIT_FAILURE);
-		}
+		errno = 0;
+		if (!write_line(s_dst[s_next], line)) {
+			warn("write_line() failed");
+			if (!s_skip_writefail)
+				exit(EXIT_FAILURE);
 
-		if (g_flush)
-			fflush(g_dst[g_next]);
+			fclose(s_dst[s_next]);
+			s_dst[s_next] = NULL;
+			if (--remain == 0)
+				errx(EXIT_SUCCESS, "no files remaining");
+		} else if (s_flush)
+			fflush(s_dst[s_next]);
 
-		g_next = (g_next + 1) % g_count;
+		/* advance, skip over entries which failed earlier */
+		while (!s_dst[s_next = (s_next + 1) % s_count])
+			;
+
+		errno = 0;
 	}
 
-	free(line);
-
-	exit(EXIT_SUCCESS);
+	if (ferror(stdin))
+		err(EXIT_FAILURE, "getline() failed");
 }
